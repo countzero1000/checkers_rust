@@ -1,15 +1,19 @@
 use std::{
     fmt::{self, write},
+    io::Empty,
     iter::Cloned,
     ops::ControlFlow,
     slice::SliceIndex,
 };
 
 use bit_vec::{BitVec, Blocks};
-use rand::prelude::SliceRandom;
+use rand::{prelude::SliceRandom, seq::index, Rng};
 static BITS_PS: usize = 3;
+#[derive(Clone)]
 pub struct Board {
-    internal_state: BitVec,
+    internal_state: [Piece; 64],
+    current_turn: Color,
+    last_turn: Option<Color>,
 }
 #[derive(Clone, Copy)]
 pub enum Piece {
@@ -17,16 +21,51 @@ pub enum Piece {
     Empty,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub enum Color {
     Black,
     Red,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 
 pub enum Action {
     Move(usize, usize, usize, usize),
     Capture(usize, usize, usize, usize, usize, usize),
+}
+
+const StaticSize: usize = 25;
+pub struct StaticList<T> {
+    mem: [Option<T>; StaticSize],
+    len: usize,
+}
+
+impl<T> StaticList<T>
+where
+    Option<T>: Copy,
+{
+    pub fn new() -> Self {
+        Self {
+            mem: [None; StaticSize],
+            len: 0,
+        }
+    }
+
+    pub fn push(&mut self, item: T) {
+        if self.len >= StaticSize {
+            println!("Too many items {}", self.len + 1);
+            panic!()
+        }
+        self.mem[self.len] = Some(item);
+        self.len += 1
+    }
+
+    pub fn len(&self) -> usize {
+        return self.len;
+    }
+
+    pub fn get(&self, index: usize) -> T {
+        return self.mem[index].unwrap();
+    }
 }
 
 impl fmt::Display for Piece {
@@ -94,23 +133,36 @@ impl Color {
 }
 
 impl Board {
-    pub fn new() -> Self {
+    pub fn get_current_color(&self) -> Color {
+        return self.current_turn;
+    }
+
+    pub fn get_last_turn(&self) -> Option<Color> {
+        return self.last_turn;
+    }
+
+    pub fn new(starting_color: Color) -> Self {
         Self {
-            internal_state: BitVec::from_elem(64 * BITS_PS, false),
+            internal_state: [Piece::Empty; 64],
+            current_turn: starting_color,
+            last_turn: None,
         }
     }
 
     pub fn clone(&self) -> Self {
         Self {
             internal_state: self.internal_state.clone(),
+            current_turn: self.current_turn.clone(),
+            last_turn: self.last_turn.clone(),
         }
     }
 
-    fn get_actions(&self, x: usize, y: usize) -> Vec<Action> {
+    fn get_actions(&self, x: usize, y: usize) -> StaticList<Action> {
         let piece = self.get_piece(x, y).unwrap();
         let dirs = piece.get_dirs();
-        let mut moves = vec![];
-        let mut caps = vec![];
+        let mut moves = StaticList::new();
+        let mut caps = StaticList::new();
+
         for (xd, yd) in dirs {
             let cx = (x as i32 + xd) as usize;
             let cy = (y as i32 + yd) as usize;
@@ -132,7 +184,7 @@ impl Board {
                                     if cap_color != self_color {
                                         match move_to {
                                             Some(move_to) => match move_to {
-                                                Piece::Filled(color, _) => {}
+                                                Piece::Filled(_, _) => {}
                                                 Piece::Empty => {
                                                     caps.push(Action::Capture(x, y, mx, my, cx, cy))
                                                 }
@@ -159,42 +211,60 @@ impl Board {
         match action {
             Action::Move(x, y, nx, ny) => {
                 let mut piece = self.get_piece(x, y).unwrap().clone();
-                println!("moved a {} at {}, {} to {}, {}", piece, x, y, nx, ny);
+                // println!("moved a {} at {}, {} to {}, {}", piece, x, y, nx, ny);
                 self.set_piece(x, y, Piece::Empty);
                 self.set_piece(nx, ny, piece);
                 if ny == piece.king_y_con() {
                     self.king_piece(nx, ny)
                 }
+                self.last_turn = Some(self.current_turn);
+                self.current_turn = self.current_turn.opposite();
             }
             Action::Capture(x, y, nx, ny, cx, cy) => {
                 let mut piece = self.get_piece(x, y).unwrap().clone();
-                println!("captured with a {}", piece);
+                // println!("captured with a {}", piece);
                 self.set_piece(x, y, Piece::Empty);
                 self.set_piece(cx, cy, Piece::Empty);
                 self.set_piece(nx, ny, piece);
                 if ny == piece.king_y_con() {
                     self.king_piece(nx, ny)
                 }
+                self.last_turn = Some(self.current_turn);
+                let moves = self.get_all_actions();
+                if moves.len() > 0 {
+                    match moves.get(0) {
+                        Action::Move(_, _, _, _) => {
+                            self.current_turn = self.current_turn.opposite()
+                        }
+                        Action::Capture(_, _, _, _, _, _) => {}
+                    }
+                }
             }
         }
     }
 
     fn king_piece(&mut self, x: usize, y: usize) {
-        let ptr = (y * 8 + x) * BITS_PS;
-        self.internal_state.set(ptr, true);
+        let ptr = y * 8 + x;
+        match self.internal_state[ptr] {
+            Piece::Filled(color, _) => {
+                self.internal_state[ptr] = Piece::Filled(color, true);
+            }
+            Piece::Empty => panic!(),
+        }
     }
 
-    pub fn get_all_actions(&self, color: Color) -> Vec<Action> {
-        let mut moves = vec![];
-        let mut capts = vec![];
+    pub fn get_all_actions(&self) -> StaticList<Action> {
+        let mut moves = StaticList::new();
+        let mut capts = StaticList::new();
         for y in 0..8 {
             for x in 0..8 {
                 let piece = self.get_piece(x, y).unwrap();
                 match piece {
                     Piece::Filled(c, _) => {
-                        if c == color {
+                        if c == self.current_turn {
                             let acts = self.get_actions(x, y);
-                            for act in acts {
+                            for i in 0..acts.len() {
+                                let act = acts.get(i);
                                 match act {
                                     Action::Capture(_, _, _, _, _, _) => capts.push(act),
                                     Action::Move(_, _, _, _) => {
@@ -217,10 +287,24 @@ impl Board {
         return moves;
     }
 
-    pub fn make_random_move(&mut self, color: Color) {
-        let acts = self.get_all_actions(color);
-        let act = acts.choose(&mut rand::thread_rng()).unwrap().to_owned();
-        self.execute_action(act);
+    pub fn make_random_move(&mut self) -> Option<Color> {
+        let acts = self.get_all_actions();
+        if acts.len() == 0 {
+            return Some(self.current_turn.opposite());
+        }
+        let index = rand::thread_rng().gen_range(0..acts.len());
+        let act = if acts.len() > 0 {
+            Some(acts.get(index))
+        } else {
+            None
+        };
+        match act {
+            Some(act) => {
+                self.execute_action(act.to_owned());
+                None
+            }
+            None => Some(self.current_turn.opposite()),
+        }
     }
 
     pub fn reset(&mut self) {
@@ -245,34 +329,13 @@ impl Board {
         if x >= 8 || y >= 8 {
             return None;
         }
-
-        let ptr = (y * 8 + x) * BITS_PS;
-        let king = self.internal_state.get(ptr).unwrap();
-        let red = self.internal_state.get(ptr + 2).unwrap();
-        let black = self.internal_state.get(ptr + 1).unwrap();
-        match red {
-            true => return Some(Piece::Filled(Color::Red, king)),
-            false => match black {
-                true => return Some(Piece::Filled(Color::Black, king)),
-                false => return Some(Piece::Empty),
-            },
-        }
+        let ptr = y * 8 + x;
+        return Some(self.internal_state[ptr]);
     }
 
     pub fn set_piece(&mut self, x: usize, y: usize, piece: Piece) {
-        let ptr = (y * 8 + x) * BITS_PS;
-        match piece {
-            Piece::Filled(color, king) => {
-                self.internal_state.set(ptr, king);
-                self.internal_state.set(ptr + 1, color == Color::Black);
-                self.internal_state.set(ptr + 2, color == Color::Red);
-            }
-            Piece::Empty => {
-                self.internal_state.set(ptr, false);
-                self.internal_state.set(ptr + 1, false);
-                self.internal_state.set(ptr + 2, false)
-            }
-        }
+        let ptr = y * 8 + x;
+        self.internal_state[ptr] = piece;
     }
 
     pub fn print_board(&self) {

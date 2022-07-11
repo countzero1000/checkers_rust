@@ -1,25 +1,34 @@
-use std::f32::consts::PI;
-
-use board::{Color, Piece};
+use board::{Board, Color};
+use montecarlo::Tree;
 
 mod board;
 mod minimax;
 mod montecarlo;
 
 fn main() {
-    let mut board = board::Board::new();
+    let mut board = Board::new(Color::Black);
     board.reset();
-    board.print_board();
+    let mut tree = Tree::new(board);
+    println!("best move {:?}", tree.get_monte_carlo_move());
 
-    // board.set_piece(2, 2, Piece::Filled(Color::Red, true));
+    // use indextree::Arena;
+    // let mut arena = Arena::new();
+    // let n1 = arena.new_node("1");
+    // let n1_1 = arena.new_node("1_1");
+    // n1.append(n1_1, &mut arena);
+    // let n1_1_1 = arena.new_node("1_1_1");
+    // n1_1.append(n1_1_1, &mut arena);
+    // let n1_2 = arena.new_node("1_2");
+    // n1.append(n1_2, &mut arena);
+    // let n1_3 = arena.new_node("1_3");
+    // n1.append(n1_3, &mut arena);
 
-    // board.print_board();
+    // let n1_3_1 = arena.new_node("1_3_1");
+    // n1_3.append(n1_3_1, &mut arena);
 
-    let mut cur_color = Color::Red;
-
-    while true {
-        board.make_random_move(cur_color);
-        board.print_board();
-        cur_color = cur_color.opposite();
-    }
+    // let mut iter = n1.children(&arena);
+    // assert_eq!(iter.next(), Some(n1_1));
+    // assert_eq!(iter.next(), Some(n1_2));
+    // assert_eq!(iter.next(), Some(n1_3));
+    // assert_eq!(iter.next(), None);
 }
