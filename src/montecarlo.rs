@@ -3,7 +3,7 @@ use rand::{
     Rng,
 };
 
-use crate::board::{Action, Board, Color, StaticList};
+use crate::board::{Action, Board, Color, MoveMemHandler, StaticList};
 use indextree::{Arena, NodeId};
 
 #[derive(Clone, Copy)]
@@ -20,25 +20,33 @@ pub struct Tree {
     root: NodeId,
     arena: Arena<NodeState>,
     board_arena: Arena<Board>,
+    move_handler: MoveMemHandler,
 }
 
 impl Tree {
     pub fn get_monte_carlo_move(&mut self) -> Action {
         let root = self.arena.get(self.root).unwrap().get();
-        let starting_moves = self
-            .board_arena
+        self.board_arena
             .get(root.board)
             .unwrap()
             .get()
-            .get_all_actions();
+            .get_all_actions(&mut self.move_handler);
 
-        if starting_moves.len() == 1 {
-            return starting_moves.get(0);
+        if !self.move_handler.has_actions() {
+            println!("returning first move");
+            return self.move_handler.get(0);
         }
-        root.expand(&mut self.arena, &mut self.board_arena);
+        root.expand(
+            &mut self.arena,
+            &mut self.board_arena,
+            &mut self.move_handler,
+        );
+        let mut i = 0;
         for _ in 0..10000 {
             self.expand_tree();
+            i += 1;
         }
+        println!("expanded {} times", i);
         return self.select_best_move();
     }
 
@@ -52,6 +60,7 @@ impl Tree {
             root: root_id,
             arena: arena,
             board_arena: board_arena,
+            move_handler: MoveMemHandler::new(),
         }
     }
 
@@ -79,11 +88,9 @@ impl Tree {
         let mut arena = &mut self.arena;
         let promising_node_id = arena.get(self.root).unwrap().get().select_node(&arena);
 
-        // println!("selected node {}", promising_node_id);
-
         let promising_node = arena.get_mut(promising_node_id).unwrap().get_mut();
 
-        promising_node.expand(&mut arena, &mut self.board_arena);
+        promising_node.expand(&mut arena, &mut self.board_arena, &mut self.move_handler);
 
         let children = promising_node_id.children(&self.arena).into_iter();
 
@@ -107,11 +114,11 @@ impl Tree {
             test_node = children.get(index);
         }
 
-        self.arena
-            .get(test_node)
-            .unwrap()
-            .get()
-            .play_out(&mut self.arena, &mut self.board_arena);
+        self.arena.get(test_node).unwrap().get().play_out(
+            &mut self.arena,
+            &mut self.board_arena,
+            &mut self.move_handler,
+        );
     }
 }
 
@@ -142,11 +149,21 @@ impl<'a, 'b> NodeState {
         self.loc = Some(loc)
     }
 
-    pub fn expand(self, arena: &'a mut Arena<NodeState>, board_arena: &'b mut Arena<Board>) {
+    pub fn expand(
+        self,
+        arena: &'a mut Arena<NodeState>,
+        board_arena: &'b mut Arena<Board>,
+        move_mem: &mut MoveMemHandler,
+    ) {
         // println!("expanding on node {:?}", self.loc);
-        let moves = board_arena.get(self.board).unwrap().get().get_all_actions();
-        for index in 0..moves.len() {
-            let action = moves.get(index);
+        board_arena
+            .get(self.board)
+            .unwrap()
+            .get()
+            .get_all_actions(move_mem);
+        let len = move_mem.len();
+        for index in 0..len {
+            let action = move_mem.get(index);
             let new_child = arena.new_node(NodeState::new_child(self.board, action, board_arena));
             arena
                 .get_mut(new_child)
@@ -172,11 +189,17 @@ impl<'a, 'b> NodeState {
                 .sqrt()
     }
 
-    pub fn play_out(self, arena: &mut Arena<NodeState>, board_arena: &Arena<Board>) {
+    pub fn play_out(
+        self,
+        arena: &mut Arena<NodeState>,
+        board_arena: &Arena<Board>,
+        move_mem: &mut MoveMemHandler,
+    ) {
         let mut copy_board = board_arena.get(self.board).unwrap().get().clone();
         let mut winner = None;
+
         while winner == None {
-            winner = copy_board.make_random_move();
+            winner = copy_board.make_random_move(move_mem);
         }
         self.back_propagate(winner.unwrap(), arena, board_arena);
     }

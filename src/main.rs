@@ -1,5 +1,6 @@
 use board::{Board, Color};
 use montecarlo::Tree;
+use std::time::Instant;
 
 mod board;
 mod minimax;
@@ -9,7 +10,11 @@ fn main() {
     let mut board = Board::new(Color::Black);
     board.reset();
     let mut tree = Tree::new(board);
+
+    let now = Instant::now();
     println!("best move {:?}", tree.get_monte_carlo_move());
+    let elapsed = now.elapsed();
+    println!("took: {:.2?}", elapsed)
 
     // use indextree::Arena;
     // let mut arena = Arena::new();
